@@ -1,7 +1,7 @@
 {
   "name": "xhs-download",
   "displayName": "Xhs download",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "download xhs img",
   "author": "jeek",
   "scripts": {
