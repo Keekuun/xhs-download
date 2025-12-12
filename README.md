@@ -94,6 +94,44 @@ npm run build
 
 构建完成后，生产版本会输出到 `build/chrome-mv3-prod` 目录。
 
+### 打包扩展
+
+```bash
+pnpm package
+# 或
+npm run package
+```
+
+打包完成后，会在 `build/` 目录生成可用于发布的 `.zip` 文件。
+
+### 版本管理和发布
+
+项目提供了便捷的版本管理和发布脚本：
+
+```bash
+# 更新补丁版本（0.0.x）
+pnpm version:patch
+# 或
+npm run version:patch
+
+# 更新次要版本（0.x.0）
+pnpm version:minor
+# 或
+npm run version:minor
+
+# 更新主要版本（x.0.0）
+pnpm version:major
+# 或
+npm run version:major
+
+# 构建并打包发布版本
+pnpm release
+# 或
+npm run release
+```
+
+版本更新后，GitHub Actions 会自动触发发布流程，创建 GitHub Release。
+
 ### 代码规范
 
 项目使用Prettier进行代码格式化，请确保在提交代码前运行格式化命令：
