@@ -2,16 +2,20 @@
 import JSZip from 'jszip'
 
 // 定义消息类型接口
+type DownloadFormat = 'original' | 'png' | 'jpg' | 'webp'
+
 interface DownloadImageMessage {
   action: 'downloadImage';
   url: string;
   filename: string;
+  format?: DownloadFormat;
 }
 
 interface DownloadImagesMessage {
   action: 'downloadImages';
   images: string[];
   postTitle: string;
+  format?: DownloadFormat;
 }
 
 type BackgroundMessage = DownloadImageMessage | DownloadImagesMessage;
@@ -68,7 +72,7 @@ function removeFromDownloading(url: string, filename: string): void {
 // 监听来自content script的消息
 chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendResponse) => {
   if (message.action === 'downloadImage') {
-    downloadImage(message.url, message.filename)
+    downloadImage(message.url, message.filename, message.format || 'original')
       .then(() => {
         sendResponse({ success: true })
       })
@@ -78,7 +82,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
       })
     return true // 表示会异步发送响应
   } else if (message.action === 'downloadImages') {
-    downloadImages(message.images, message.postTitle)
+    downloadImages(message.images, message.postTitle, message.format || 'original')
       .then(() => {
         sendResponse({ success: true })
       })
@@ -119,6 +123,11 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   })
 }
 
+function getExtensionFromType(mimeType: string, fallback = 'jpg'): string {
+  const parts = mimeType.split('/');
+  return parts[1] || fallback;
+}
+
 // 使用chrome.downloads API下载文件
 async function downloadFile(dataUrl: string, filename: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -136,18 +145,55 @@ async function downloadFile(dataUrl: string, filename: string): Promise<void> {
   })
 }
 
+function ensureFilenameExtension(filename: string, desiredExt: string): string {
+  const sanitized = sanitizeFilename(filename)
+  const extRegex = /\.([a-zA-Z0-9]+)$/
+  const match = sanitized.match(extRegex)
+  if (match) {
+    if (match[1].toLowerCase() === desiredExt.toLowerCase()) {
+      return sanitized
+    }
+    return sanitized.replace(extRegex, `.${desiredExt}`)
+  }
+  return `${sanitized}.${desiredExt}`
+}
+
+async function convertBlobFormat(blob: Blob, format: DownloadFormat): Promise<{ blob: Blob; ext: string }> {
+  if (format === 'original') {
+    return { blob, ext: getExtensionFromType(blob.type) }
+  }
+
+  const targetType = format === 'jpg' ? 'image/jpeg' : `image/${format}`
+  try {
+    const imageBitmap = await createImageBitmap(blob)
+    const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      throw new Error('无法创建画布上下文')
+    }
+    ctx.drawImage(imageBitmap, 0, 0)
+    const convertedBlob = await canvas.convertToBlob({
+      type: targetType,
+      quality: format === 'jpg' ? 0.92 : 0.95
+    })
+    return { blob: convertedBlob, ext: format === 'jpg' ? 'jpg' : format }
+  } catch (error) {
+    console.error('图片格式转换失败，使用原始格式', error)
+    return { blob, ext: getExtensionFromType(blob.type) }
+  }
+}
+
 // 下载单张图片
-async function downloadImage(url: string, filename: string) {
+async function downloadImage(url: string, filename: string, format: DownloadFormat = 'original') {
   // 检查是否正在下载
   if (isDownloading(url, filename)) {
     throw new Error('该文件正在下载中，请勿重复下载');
   }
   
-  // 添加到正在下载列表
-  addToDownloading(url, filename);
+  const trackingFilename = filename;
+  addToDownloading(url, trackingFilename);
   
   try {
-    // 发送CORS请求获取图片
     const response = await fetch(url, {
       mode: 'cors',
       credentials: 'omit',
@@ -162,39 +208,26 @@ async function downloadImage(url: string, filename: string) {
     
     const blob = await response.blob()
     
-    // 验证是否为图片类型
     if (!blob.type.startsWith('image/')) {
       throw new Error(`下载失败：不是有效的图片文件，类型为 ${blob.type}`)
     }
+
+    const { blob: convertedBlob, ext } = await convertBlobFormat(blob, format)
+    const finalFilename = ensureFilenameExtension(filename, ext)
     
-    // 清理文件名
-    filename = sanitizeFilename(filename)
+    const dataUrl = await blobToDataUrl(convertedBlob)
     
-    // 确保文件名包含正确的扩展名
-    const hasExtension = /\.[a-zA-Z0-9]+$/.test(filename)
-    if (!hasExtension) {
-      // 从blob类型中获取扩展名
-      const ext = blob.type.split('/')[1] || 'jpg'
-      filename = `${filename}.${ext}`
-    }
-    
-    // 将blob转换为data URL
-    const dataUrl = await blobToDataUrl(blob)
-    
-    // 下载文件
-    await downloadFile(dataUrl, filename)
+    await downloadFile(dataUrl, finalFilename)
   } catch (error) {
-    // 发生错误时，从正在下载列表中移除
-    removeFromDownloading(url, filename);
+    removeFromDownloading(url, trackingFilename);
     throw error;
   } finally {
-    // 无论成功失败，都从正在下载列表中移除
-    removeFromDownloading(url, filename);
+    removeFromDownloading(url, trackingFilename);
   }
 }
 
 // 下载多张图片并打包为ZIP
-async function downloadImages(images: string[], postTitle: string) {
+async function downloadImages(images: string[], postTitle: string, format: DownloadFormat = 'original') {
   // 生成ZIP文件标识（使用图片URL的哈希值和标题组合）
   const imagesHash = images.sort().join('').replace(/[^a-zA-Z0-9]/g, '');
   const zipFilename = `${sanitizeFilename(postTitle)}-images.zip`;
@@ -239,10 +272,9 @@ async function downloadImages(images: string[], postTitle: string) {
           throw new Error(`不是有效的图片文件，类型为 ${blob.type}`)
         }
         
-        // 获取图片扩展名
-        const ext = blob.type.split('/')[1] || 'jpg'
+        const { blob: convertedBlob, ext } = await convertBlobFormat(blob, format)
         // 添加到zip
-        zip.file(`${sanitizedPostTitle}-${i + 1}.${ext}`, blob)
+        zip.file(`${sanitizedPostTitle}-${i + 1}.${ext}`, convertedBlob)
       } catch (error) {
         console.error(`下载图片 ${imgUrl} 失败:`, error)
         // 继续下载其他图片，不中断整个过程

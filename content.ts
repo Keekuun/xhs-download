@@ -6,10 +6,15 @@ interface DownloadMessage {
   filename?: string;
   images?: string[];
   postTitle?: string;
+  format?: DownloadFormat;
 }
+
+type DownloadFormat = 'original' | 'png' | 'jpg' | 'webp'
 
 class XhsDownload {
   private downloadButton: HTMLButtonElement | null = null
+  private downloadWrapper: HTMLDivElement | null = null
+  private selectedFormat: DownloadFormat = 'original'
   private toastContainer: HTMLDivElement | null = null
   private observer: MutationObserver | null = null
   private contextMenuAdded: boolean = false
@@ -43,11 +48,12 @@ class XhsDownload {
     // 移除右键菜单事件监听
     document.removeEventListener('contextmenu', this.handleContextMenu)
 
-    // 移除下载按钮
-    if (this.downloadButton && this.downloadButton.parentElement) {
-      this.downloadButton.parentElement.removeChild(this.downloadButton)
-      this.downloadButton = null
+    // 移除下载区域
+    if (this.downloadWrapper && this.downloadWrapper.parentElement) {
+      this.downloadWrapper.parentElement.removeChild(this.downloadWrapper)
     }
+    this.downloadWrapper = null
+    this.downloadButton = null
 
     // 移除toast容器
     if (this.toastContainer && this.toastContainer.parentElement) {
@@ -83,12 +89,13 @@ class XhsDownload {
       '.swiper.note-slider'
     ) as HTMLElement
 
-    // 检查按钮是否仍然在DOM中
-    if (this.downloadButton && !document.body.contains(this.downloadButton)) {
+    // 检查按钮区域是否仍然在DOM中
+    if (this.downloadWrapper && !document.body.contains(this.downloadWrapper)) {
+      this.downloadWrapper = null
       this.downloadButton = null
     }
 
-    if (swiperContainer && !this.downloadButton) {
+    if (swiperContainer && !this.downloadWrapper) {
       this.createDownloadButton(swiperContainer)
     }
   }
@@ -152,19 +159,25 @@ class XhsDownload {
   
   // 创建下载按钮
   private createDownloadButton(container: HTMLElement) {
-    this.downloadButton = document.createElement('button')
-    this.downloadButton.textContent = '✨下载图片'
-    this.downloadButton.style.cssText = `
+    this.downloadWrapper = document.createElement('div')
+    this.downloadWrapper.style.cssText = `
       position: absolute;
       top: 10px;
       left: 10px;
+      display: flex;
+      gap: 4px;
+      z-index: 9999;
+    `
+
+    this.downloadButton = document.createElement('button')
+    this.downloadButton.textContent = '✨下载图片'
+    this.downloadButton.style.cssText = `
       background: #000;
       color: #fff;
       border: none;
       padding: 8px 16px;
-      border-radius: 4px;
+      border-radius: 4px 0 0 4px;
       cursor: pointer;
-      z-index: 9999;
       font-size: 14px;
       opacity: 0.8;
       transition: opacity 0.2s;
@@ -184,9 +197,40 @@ class XhsDownload {
       this.downloadAllImages()
     })
 
+    const formatSelect = document.createElement('select')
+    formatSelect.style.cssText = `
+      background: #111;
+      color: #fff;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 0 4px 4px 0;
+      cursor: pointer;
+      font-size: 14px;
+      opacity: 0.9;
+      outline: none;
+    `
+    ;[
+      { value: 'original', label: '原格式' },
+      { value: 'png', label: 'PNG' },
+      { value: 'jpg', label: 'JPG' },
+      { value: 'webp', label: 'WEBP' }
+    ].forEach((option) => {
+      const opt = document.createElement('option')
+      opt.value = option.value
+      opt.textContent = option.label
+      formatSelect.appendChild(opt)
+    })
+
+    formatSelect.addEventListener('change', (e) => {
+      const value = (e.target as HTMLSelectElement).value as DownloadFormat
+      this.selectedFormat = value
+    })
+
     // 添加到swiper容器
     container.style.position = 'relative'
-    container.appendChild(this.downloadButton)
+    this.downloadWrapper.appendChild(this.downloadButton)
+    this.downloadWrapper.appendChild(formatSelect)
+    container.appendChild(this.downloadWrapper)
   }
 
   // 获取帖子标题
@@ -258,8 +302,8 @@ class XhsDownload {
   }
 
   // 生成单张图片的文件名
-  private generateSingleImageFilename(postTitle: string, imgUrl: string): string {
-    const ext = this.getImageExtension(imgUrl)
+  private generateSingleImageFilename(postTitle: string, imgUrl: string, format: DownloadFormat): string {
+    const ext = format === 'original' ? this.getImageExtension(imgUrl) : format
     return `${postTitle}.${ext}`
   }
 
@@ -272,6 +316,7 @@ class XhsDownload {
     }
 
     const postTitle = this.getPostTitle()
+    const targetFormat = this.selectedFormat
     
     console.log('postTitle', postTitle)
 
@@ -279,12 +324,13 @@ class XhsDownload {
       // 如果只有一张图片，直接下载
       if (images.length === 1) {
         const imgUrl = images[0]
-        const filename = this.generateSingleImageFilename(postTitle, imgUrl)
+        const filename = this.generateSingleImageFilename(postTitle, imgUrl, targetFormat)
         
         // 发送消息到background进行下载
         const response = await this.sendMessageToBackground('downloadImage', {
           url: imgUrl,
-          filename: filename
+          filename: filename,
+          format: targetFormat
         })
 
         if (response.success) {
@@ -304,7 +350,8 @@ class XhsDownload {
         // 发送消息到background进行下载
         const response = await this.sendMessageToBackground('downloadImages', {
           images: images,
-          postTitle: postTitle
+          postTitle: postTitle,
+          format: targetFormat
         })
 
         if (response.success) {
@@ -381,7 +428,8 @@ class XhsDownload {
       // 发送消息到background进行下载
       const response = await this.sendMessageToBackground('downloadImage', {
         url: noWatermarkUrl,
-        filename: filename
+        filename: filename,
+        format: this.selectedFormat
       })
 
       if (response.success) {
@@ -465,7 +513,7 @@ class XhsDownload {
             const postTitle = this.getPostTitle()
             console.log('postTitle', postTitle)
             // 使用生成的文件名进行下载
-            const filename = this.generateSingleImageFilename(postTitle, src)
+            const filename = this.generateSingleImageFilename(postTitle, src, this.selectedFormat)
             this.downloadImage(src, filename)
           }
       }
