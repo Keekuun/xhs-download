@@ -54,7 +54,7 @@
 ## 界面预览
 
 ![xhs-download界面截图1](./assets/screenshot_2025-12-15_10-48-26.png)
-![xhs-download界面截图2](./assets/screenshot_2025-12-15_10-49-03.png)
+![xhs-download界面截图2](./assets/screenshot_2025-12-15_10-49-04.png)
 
 ## 技术栈
 
